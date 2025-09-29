@@ -1,11 +1,41 @@
-import { useMutation } from '@tanstack/react-query'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { createItem } from '../lib/api'
 import { useState } from 'react'
+import type { Item } from '../types'
 
 export function AddItem({ onAdded }: { onAdded: () => void }) {
   const [text, setText] = useState('')
+  const queryClient = useQueryClient()
+  
   const mutation = useMutation({
     mutationFn: createItem,
+    onMutate: async (newText: string) => {
+      // Cancel any outgoing refetches
+      await queryClient.cancelQueries({ queryKey: ['items'] })
+
+      // Snapshot the previous value
+      const previousItems = queryClient.getQueryData<Item[]>(['items'])
+
+      // Optimistically update to the new value
+      const optimisticItem: Item = {
+        id: Date.now(), // Temporary ID
+        text: newText,
+        created_at: new Date().toISOString(),
+      }
+      
+      queryClient.setQueryData<Item[]>(['items'], (old) => 
+        old ? [optimisticItem, ...old] : [optimisticItem]
+      )
+
+      // Return a context object with the snapshotted value
+      return { previousItems }
+    },
+    onError: (err, newText, context) => {
+      // If the mutation fails, use the context returned from onMutate to roll back
+      if (context?.previousItems) {
+        queryClient.setQueryData(['items'], context.previousItems)
+      }
+    },
     onSuccess: () => {
       setText('')
       onAdded()
